@@ -270,6 +270,118 @@ def mac_str(mac):
     return ":".join(f"{b:02X}" for b in mac)
 
 
+# ---------------------------------------------------------------------------
+#  Format BT — over-the-air BLE capture from DRIP_BLE_Sniffer (ESP32 #2)
+#
+#  The Bluetooth counterpart of Format A. Each advertisement is:
+#
+#      # DRIP-BLE-SNIFFER v1 ...                              <- banner (ignored)
+#      #B addr=C2:44:52:49:50:00 rssi=-42 t_ms=12345 len=208 <- metadata
+#      FA FF 0D 86 F2 19 08 ...   <- Service Data field, UUID-first:
+#                                    [UUID FA FF][AppCode 0D][counter][Msg Pack]
+#
+#  The hex line is exactly the bytes the transmitter's ble_build_svcdata()
+#  assembles (ADR 0002/0003), so this parser and the transmitter agree byte for
+#  byte. counter = svc[3]; payload (the Message Pack, or a single 25-byte ODID
+#  message for BT4) = svc[4:].
+#
+#  Like Format A, the sniffer states the Service Data length ('#B ... len=NN');
+#  a hex line that does not total NN did not survive the SERIAL LINK and is
+#  reported as capture damage (W-CAP-01), never decoded into DRIP "violations"
+#  that are really byte loss.
+# ---------------------------------------------------------------------------
+ODID_BT_UUID_LO   = 0xFA          # UUID 0xFFFA, little-endian on the wire
+ODID_BT_UUID_HI   = 0xFF
+ODID_BT_APP_CODE  = 0x0D
+ODID_BT_HDR_BYTES = 4             # UUID(2) + AppCode(1) + Counter(1)
+
+_FMT_BT_META = re.compile(
+    r'^#B\s+addr=([0-9A-Fa-f:]{17})\s+rssi=(-?\d+)'
+    r'(?:\s+t_ms=(\d+))?\s+len=(\d+)')
+
+
+def looks_like_format_bt(text):
+    """True if this is a DRIP_BLE_Sniffer air capture (Format BT).
+
+    Anchored on the banner or on a '#B addr=' metadata marker. Must be tested
+    BEFORE Format B (flat hex), since the advert's hex line would also satisfy
+    Format B. It cannot trip Format A: the hex line has no 6-hex offset prefix
+    and 'DRIP-BLE-SNIFFER' does not contain the substring 'DRIP-SNIFFER'.
+    """
+    if 'DRIP-BLE-SNIFFER' in text:
+        return True
+    for line in text.splitlines():
+        if _FMT_BT_META.match(line.strip()):
+            return True
+    return False
+
+
+def parse_format_bt(text, strict_len=True):
+    """Parse a DRIP_BLE_Sniffer capture.
+
+    Returns (records, damaged) where
+        records = [{meta, mac, counter, payload}]  -- adverts that arrived INTACT
+        damaged = [(meta, got_len)]                -- Service Data byte count did
+                                                      not match '#B ... len='
+
+    meta may contain: addr, rssi, t_ms, len.
+    payload = the Message Pack (first nibble 0xF), or a single 25-byte ODID
+    message for a BT4 legacy advert. An advert whose Service Data is not
+    UUID 0xFFFA + AppCode 0x0D is skipped (defensive; the sniffer already
+    filters on it).
+    """
+    records = []
+    damaged = []
+    cur_meta = None
+    cur_hex = None      # accumulates the hex bytes under the current '#B'
+
+    def _close(meta, hexbuf):
+        if meta is None:
+            return
+        declared = meta.get("len")
+        if strict_len and declared is not None and declared != len(hexbuf):
+            damaged.append((meta, len(hexbuf)))          # serial-side byte loss
+            return
+        svc = bytes(hexbuf)
+        if (len(svc) < ODID_BT_HDR_BYTES or
+                svc[0] != ODID_BT_UUID_LO or svc[1] != ODID_BT_UUID_HI or
+                svc[2] != ODID_BT_APP_CODE):
+            return                                       # not an ODID advert
+        records.append({
+            "meta": meta,
+            "mac": meta.get("addr", "??:??:??:??:??:??").upper(),
+            "counter": svc[3],
+            "payload": svc[ODID_BT_HDR_BYTES:],
+        })
+
+    for line in text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        m = _FMT_BT_META.match(s)
+        if m:
+            if cur_meta is not None:
+                _close(cur_meta, cur_hex)
+            cur_meta = {"addr": m.group(1).upper(),
+                        "rssi": int(m.group(2)),
+                        "len":  int(m.group(4))}
+            if m.group(3) is not None:
+                cur_meta["t_ms"] = int(m.group(3))
+            cur_hex = bytearray()
+            continue
+        if s.startswith('#'):
+            continue                                     # banner / stats / other
+        if cur_meta is None:
+            continue                                     # hex before any '#B'
+        h = re.sub(r'[^0-9a-fA-F]', '', s)
+        if h and len(h) % 2 == 0:
+            cur_hex += bytes.fromhex(h)
+
+    if cur_meta is not None:
+        _close(cur_meta, cur_hex)
+    return records, damaged
+
+
 def looks_like_format_b(text):
     """POSITIVE test for flat hex (Format B).
 
@@ -299,24 +411,33 @@ def diagnose_format(text):
     lines = text.splitlines()
     a_rows = sum(1 for l in lines if _FMT_A_ROW.match(l))
     a_meta = sum(1 for l in lines if l.strip().startswith('#F '))
+    bt_meta = sum(1 for l in lines if l.strip().startswith('#B '))
     hints = []
     if a_rows:
         hints.append(f"{a_rows} offset-prefixed hexdump row(s) "
                      f"(e.g. '000010 02 44 52 49 50 00 ...')")
     if a_meta:
         hints.append(f"{a_meta} '#F rssi=' marker(s)")
+    if bt_meta:
+        hints.append(f"{bt_meta} '#B addr=' marker(s)")
     msg = ["unrecognised input format - refusing to guess."]
     if hints:
         msg.append("  found: " + "; ".join(hints))
-    if a_rows or a_meta:
+    if bt_meta:
+        msg.append("  this looks like a DRIP_BLE_Sniffer air capture (Format BT), "
+                   "but looks_like_format_bt() did not match it.")
+        msg.append("  a Format BT capture needs '#B addr=<mac> rssi=<n> len=<n>' "
+                   "lines, or the '# DRIP-BLE-SNIFFER' banner.")
+    elif a_rows or a_meta:
         msg.append("  this looks like a DRIP_Sniffer air capture (Format A), but "
                    "looks_like_format_a() did not match it.")
         msg.append("  a Format A capture needs a row at offset 000000 starting "
                    "with 80 (802.11 beacon), or the '# DRIP-SNIFFER' banner.")
     else:
         msg.append("  expected one of: Format L (ESP32 serial log), "
-                   "Format W (Wireshark bytes export),")
-        msg.append("  Format A (DRIP_Sniffer air capture), or Format B (flat hex).")
+                   "Format W (Wireshark bytes export), Format A (DRIP_Sniffer "
+                   "air capture),")
+        msg.append("  Format BT (DRIP_BLE_Sniffer air capture), or Format B (flat hex).")
     return "\n".join(msg)
 
 

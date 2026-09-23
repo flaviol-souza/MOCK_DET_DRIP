@@ -150,6 +150,38 @@ static const IdentityRow IDENTITY_TABLE[DET_IDENTITY_SLOTS] = {
           0xA5, 0x7E, 0x87, 0xAB, 0x53, 0x88, 0xCB, 0xB8
       }
     },
+    // -----------------------------------------------------------------------
+    // SLOT 3 — ROGUE  (negative-test identity, ADR 0004)  RAA=255 HDA=14340
+    //   seed origin : shake128(b"DRIP PoC ROGUE UA", 32)
+    //   DET         : 2001:30:3ff8:405:5414:3842:a6f1:78c1
+    //
+    //   *** This identity is DELIBERATELY untrusted. Its public key is NOT in
+    //   the observer's hierarchy.json and NOT registered in DNS, and the ROGUE
+    //   scenario broadcasts it with DRIP_TEST_BE OFF (no Broadcast Endorsement
+    //   on the air). So the observer has no key for it and no endorsement chain
+    //   -> it MUST report E-KEY-01 / not-trusted (and --dns-fallback -> NXDOMAIN).
+    //   It shares the trusted HDA's prefix (255/14340) ON PURPOSE: trust must
+    //   come from the key + endorsement, never from the DET prefix looking right.
+    //   Selected via DRIP_UA_SLOT = DRIP_SLOT_ROGUE (drip_config.h). ***
+    // -----------------------------------------------------------------------
+    {
+      {   // seed (Ed25519 private, RFC 8032)
+          0x80, 0xA7, 0xD7, 0xE2, 0xA1, 0x49, 0x2C, 0x44,
+          0xE7, 0x15, 0x75, 0x28, 0x61, 0xEB, 0x8E, 0x08,
+          0x40, 0xA4, 0xB2, 0xC3, 0xCD, 0xEE, 0x51, 0x93,
+          0x24, 0x2E, 0x91, 0xDF, 0x9E, 0x15, 0x3F, 0x93
+      },
+      {   // pubkey (HI) — derived from the seed; self-checked at boot
+          0xAD, 0xF6, 0x1A, 0xCA, 0x66, 0x3C, 0x3A, 0x31,
+          0x4D, 0x44, 0x48, 0xFA, 0x5D, 0x88, 0x5C, 0x56,
+          0xD1, 0xA9, 0xFB, 0x6E, 0x6E, 0x6C, 0xA6, 0x9D,
+          0xCA, 0xEA, 0x57, 0xE7, 0xDA, 0xE8, 0x10, 0xA6
+      },
+      {   // expected DET — cSHAKE128 ORCHID, RFC 9374 3.5.2; self-checked at boot
+          0x20, 0x01, 0x00, 0x30, 0x3F, 0xF8, 0x04, 0x05,
+          0x54, 0x14, 0x38, 0x42, 0xA6, 0xF1, 0x78, 0xC1
+      }
+    },
 };
 // ===========================================================================
 

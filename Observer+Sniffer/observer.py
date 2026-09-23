@@ -782,6 +782,27 @@ def run(text, keys=None, now=None, max_age=None, pub=None, progress=False):
                             now=now, max_age=max_age, mac=tag)
             if progress and fi and fi % 2000 == 0:
                 print(f"# {fi} frames...", file=sys.stderr, flush=True)
+    elif odid.looks_like_format_bt(text):
+        fmt = "BT (air capture - DRIP_BLE_Sniffer)"
+        bt_records, bt_damaged = odid.parse_format_bt(text)
+        # A Service Data field whose byte count contradicts the sniffer's own
+        # '#B ... len=' never arrived intact (serial-side byte loss). Reported as
+        # capture damage, not decoded into DRIP "violations" that are really loss
+        # -- same rule as Format A.
+        for meta, got in bt_damaged:
+            findings.append(Finding("W-CAP-01", "capture",
+                                    f"declared len={meta.get('len')}, got {got} B"))
+        capture_health["frames"] = len(bt_records) + len(bt_damaged)
+        capture_health["damaged"] = len(bt_damaged)
+        for ri, rec in enumerate(bt_records):
+            # The BLE source address labels every finding, so a drone is
+            # attributable exactly like the Wi-Fi MAC does for Format A.
+            tag = rec["mac"]
+            where = f"advert[{ri}] {tag} cnt=0x{rec['counter']:02X}"
+            process_payload(rec["payload"], where, keys, findings, report,
+                            now=now, max_age=max_age, mac=tag)
+            if progress and ri and ri % 2000 == 0:
+                print(f"# {ri} adverts...", file=sys.stderr, flush=True)
     elif odid.looks_like_format_w(text):
         fmt = "W (Wireshark bytes export)"
         for fi, frame in enumerate(odid.parse_format_w(text)):

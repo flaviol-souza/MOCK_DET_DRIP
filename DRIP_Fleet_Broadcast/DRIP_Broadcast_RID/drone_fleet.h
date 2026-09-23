@@ -59,7 +59,13 @@
 //        and each drone still needs a signature every ~333 ms.
 // ---------------------------------------------------------------------------
 
-#define FLEET_MAX               1      // <-- agreed scope cap; see note above
+// FLEET_MAX's owner is HERE, but a drip_config.h scenario OVERRIDES it (style B,
+// ADR 0004): drone_fleet.h includes drip_config.h above, so if a scenario has
+// already defined FLEET_MAX this #ifndef keeps that value; otherwise the default
+// below (1) applies. Agreed scope cap is 3; see note above.
+#ifndef FLEET_MAX
+#define FLEET_MAX               1
+#endif
 
 // SoftAP is single-UA (one BSSID). The SoftAP backend physically cannot carry
 // more than one drone, so building it with a multi-drone fleet is a mistake we

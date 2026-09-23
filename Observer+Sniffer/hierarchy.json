@@ -62,6 +62,27 @@
       "hda": 2000,
       "public_key": "B80BC263962420FBF1454E61BB149FCD1BDC447195B12D63C69E7FB7AEAAC3AC",
       "_role": "slot 2 (old chain)"
+    },
+    {
+      "det": "200100303FF80405D9525618FBC9C3CF",
+      "raa": 255,
+      "hda": 14340,
+      "public_key": "F505704EB544F861190F2D8EDAC9BA83F320D5E38726B3F51C220851320EC7E6",
+      "_role": "slot 0 (new chain 255/14340) - broadcast + DNSSEC-registered DET (snfr2025000123.driplab.example)"
+    },
+    {
+      "det": "200100303FF80405841243235D3CA050",
+      "raa": 255,
+      "hda": 14340,
+      "public_key": "F7D792E5DD000E8C05DCEEB357D03AF1770B0D7D6BFE429AABBD3C3F1CB16FE2",
+      "_role": "slot 1 (new chain 255/14340)"
+    },
+    {
+      "det": "200100303FF80405A57E87AB5388CBB8",
+      "raa": 255,
+      "hda": 14340,
+      "public_key": "B80BC263962420FBF1454E61BB149FCD1BDC447195B12D63C69E7FB7AEAAC3AC",
+      "_role": "slot 2 (new chain 255/14340)"
     }
   ]
 }

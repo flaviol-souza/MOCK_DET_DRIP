@@ -56,9 +56,15 @@
 #define HHIT_TEST_HDA       DRIP_UA_HDA
 
 // How many hardcoded test identities exist in the slot table
-// (det_generator.cpp, IDENTITY_TABLE). To emulate more than 3 drones you must
-// add rows here AND raise FLEET_MAX in drone_fleet.h — see the note there.
-#define DET_IDENTITY_SLOTS  3
+// (det_generator.cpp, IDENTITY_TABLE). Slots 0..2 are the fleet UAs; slot 3 is
+// the ROGUE negative-test identity (ADR 0004) — NOT a fleet drone, reachable
+// only via DRIP_UA_SLOT in a single-UA ROGUE build. To emulate more than 3
+// FLEET drones you must add rows here AND raise FLEET_MAX in drone_fleet.h.
+#define DET_IDENTITY_SLOTS  4
+
+// Identity slot broadcast by the ROGUE scenario (drip_config.h): an unenrolled
+// key, no Broadcast Endorsement, absent from DNS — the observer must reject it.
+#define DRIP_SLOT_ROGUE     3
 
 // ---------------------------------------------------------------------------
 // One virtual UA's cryptographic identity.

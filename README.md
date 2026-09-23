@@ -1,197 +1,373 @@
-# DRIP_PoC_PEE
-UNDER DEVELOPMENT
-This repository contains the files of the PoC developed as part of my Master Thesis.
-The PoC utilizes a ESP32 to broadcast the drone equivalent messages via wi-fi only (i couldn't make it work with the wifi and bluetooth modules active at the same time).
-Them, the PC capture the packages via serial port (constrains with my PC wifi board, but i could see it using DroneRemoteID apps for android, so should be fine) using python scripts to decode and assert if the messages are valid or not (it can display some errors messages to help understand why the message was consider invalid).
-As now the "drone" have it pub and private key hardcoded to facilitate test and experiments. It's expected to implement secure ways to store the privkey in the drone afterwards.
+# MOCK DET DRIP
 
+**Authenticated Broadcast Remote ID for drones — proof of concept (Master's thesis, PEE).**
 
-#OBSERVERFILES--------------------------------------------------------------------------------
-Inside the ObserverFiles folder there is some interesting pythons scripts that is used in this project context:
+> ⚠️ UNDER DEVELOPMENT. This is a bench proof of concept, **not** flight firmware.
 
-ARDUINO_LOGGER.PY
-The arduino_logger.py file is a python script that creates a text file named data_log.txt with the data that the arduino is transmitting in it's serial port.
-This Project uses two ESP32 boards, one to broadcast the drone data and another as a sniffer.
-The COM PORT of the sniffer one's is read by the arduino_logger.py that generates then the capture.txt, that is as txt file with the drone messages.
-The sniffer board exist because the PC that i am using in development dosen't support the promiscuous mode of the wifiboard.
-To use the arduino_logger the command is:
+This PoC answers one question end to end: can a receiver on the ground decide whether
+the identity a drone broadcasts over the air is **genuine**, using only the messages
+on the air plus published trust data?
 
-python3 arduino_logger.py --port COM3 --baud 921600 -o capture.txt
+Two halves that share only the radio and a capture file:
 
-Where COM3 is the COM port where my sniffer is connected, the baud choose was to garantee that all the Sniffer messages was transmitted in time without overloading the communication speed and the capture.txt is the name that you want your log file to have.
+- **Transmitter** (`DRIP_Fleet_Broadcast/`) — one ESP32 emulates 1 to 3 virtual drones
+  (UAs). Each has its own cryptographic identity (a **DET**, RFC 9374), Ed25519 key,
+  MAC address, and flight track, and broadcasts ASTM F3411 Remote ID beacons with DRIP
+  authentication. The transport can be **Wi-Fi** (raw 802.11 injection or SoftAP) **or
+  BLE** (extended advertising) — chosen at compile time.
+- **Observer** (`Observer+Sniffer/`) — a second ESP32 sniffs the air and streams the
+  frames over the serial port; Python scripts decode the capture, validate it against
+  ASTM/DRIP, resolve each drone's identity, and print a conformance verdict.
 
+The identity (DET) and the key are **hardcoded** in the firmware to make bench
+experiments easy. Storing the private key securely on the drone is future work, out of
+scope for this PoC.
 
-OBSERVER.PY
-To utilize the observer.py it's necessary to have a txt file with the packages that your drone have transmitted. It's accept some diferents types of formatation, wherever, it should display a message if it dosen't understand your formating, avoiding thus to declare it wrong just because it had not the correct formating
+---
 
-Run on your ESP32 the serial log captured with the sniffer:
-python3 observer.py capture.txt
+## Table of contents
 
-Run verbose (shows every decoded message):
-python3 observer.py capture.txt --verbose
+- [Repository layout](#repository-layout)
+- [End-to-end flow](#end-to-end-flow)
+- [Hardware and libraries](#hardware-and-libraries)
+- [Transmitter — build scenarios](#transmitter--build-scenarios)
+- [Transmitter — serial operation](#transmitter--serial-operation)
+- [Sniffers and capture](#sniffers-and-capture)
+- [Observer — validate a capture](#observer--validate-a-capture)
+- [Trust model and DNS key distribution](#trust-model-and-dns-key-distribution)
+- [Negative test (rogue drone)](#negative-test-rogue-drone)
+- [Support tools](#support-tools)
 
-Enable DET↔key binding check (E-DET-02) — pass our public key:
-python3 observer.py capture.txt --pubkey 8B65B265A496E32046CFA378B5A5FB2E877A97723E557CB5F0D21848BFE94477 #-> This is one of the public key that I are using, you can change to yours
-	
-Run on the test vectors file (the quickest demo):
-python3 observer.py bytesonlytest2.txt
+---
 
-Run the full self-test (no file needed):
-python3 make_vectors.py --selftest
+## Repository layout
 
-Some others commands that you can use with the observer.py file:
+| Path | Role |
+|---|---|
+| `DRIP_Fleet_Broadcast/DRIP_Broadcast_RID/` | **Transmitter** firmware (Arduino/ESP32, C++) — the multi-drone bench emulator |
+| `Observer+Sniffer/` | Observer Python toolchain + the `hierarchy.json` trust file |
+| `Observer+Sniffer/DRIP_Sniffer/` | **Wi-Fi** sniffer firmware (second ESP32) |
+| `Observer+Sniffer/DRIP_BLE_Sniffer/` | **BLE** sniffer firmware (second ESP32) |
 
---keyring FILE        'DET_HEX PUBKEY_HEX' per line
---no-builtin-keys     drop the 3 bench identities
---list-keys           show the keyring and exit
---pubkey HEX          now a wildcard: any DET without an entry
+> Legacy versions (the old single-drone transmitter, the old observer, the Wireshark
+> bridge) were removed from the repository in this cleanup. What is listed above is
+> what is actually in use.
 
+---
 
-Early i had a pure python implementation that was taking too long to run but was bring correct results.
-Now, when the observer starts it verify the old implementing alongside with the new for a now package and a corrupted know one too and return that everything agrees.
-If you want you can run the purê python version but be aware that it was taking hours to return a 3 drone 12 minutes flight.
-Proof it's equivalent, on your data: observer.py capture.txt and --pure-python produce byte-identical output. --pure-python is there whenever you want to re-run a result against the reference.
+## End-to-end flow
 
+```mermaid
+flowchart LR
+    TX["Transmitter ESP32<br/>(DRIP_Fleet_Broadcast)<br/>Wi-Fi or BLE"]
+    AIR(("air<br/>channel 6 / BLE ext-adv"))
+    SNF["Sniffer ESP32<br/>(DRIP_Sniffer / DRIP_BLE_Sniffer)"]
+    LOG["arduino_logger.py<br/>serial -> capture.txt"]
+    OBS["observer.py<br/>decode + validate + resolve"]
+    OUT["per-DET verdict<br/>trusted / OK / E-*"]
+    TX --> AIR --> SNF --> LOG --> OBS --> OUT
+```
 
-MAKE_MAP.PY
-This python script generates a .html file to display graphically the path of the drone using the captured data of a .txt file. 
-This file was made using as template the cyber-defence-campus/RemoteIDReceiver repository
-To run the make_map.py you can use this command:
+The Remote ID content is **transport-agnostic**: the same DET and the same DRIP
+authentication pages go out over Wi-Fi or over BLE, and the observer produces the same
+verdict.
 
-python3 make_map.py your_log.txt -o my_flight.html --title "Test flight 3"
+---
 
-The your_log.txt is the txt file that you want the graphic representation, the my_flight.html is the name that you want for the product (the map generated).
+## Hardware and libraries
 
-#---------------------------------------------------------------------------------------------
+- **Board:** "ESP32 Dev Module" (most ESP32 boards should work; extended BLE
+  advertising needs an ESP32 with BLE 5, e.g. ESP32-S3).
+- **IDE:** Arduino IDE with the ESP32 core.
+- **Arduino libraries:**
+  - **Crypto** by Rhys Weatherley — Ed25519 (the active path).
+  - **NimBLE-Arduino** by h2zero — genuinely used by the BLE transport (no longer dead
+    code). **Requires Extended Advertising enabled in the library:** in
+    `NimBLE-Arduino/src/nimconfig.h`, set `CONFIG_BT_NIMBLE_EXT_ADV 1`.
+  - **Seeed_Arduino_mbedtls** — leftover from earlier work; may be installed.
+- **Python 3** on the PC for the observer. **Optional** dependency: `dnspython`, needed
+  only for live DNS lookups (`--dns-lookup` / `--dns-fallback`); the rest of the
+  toolchain runs offline without it.
+- **Serial:** transmitter console at **115200 baud**; sniffer at **921600 baud**.
 
-#LEGACY_DRIP_BROADCAST_RID--------------------------------------------------------------------
+---
 
+## Transmitter — build scenarios
 
-This folder will be keep in the Project for now so i can run some test if deemed necessary later for my thesis writing but will be discontinued later since it is a older version with some old problems that dosen't exist anymore.
+All transmitter behavior is chosen in **one place**: the scenario board in
+`DRIP_Fleet_Broadcast/DRIP_Broadcast_RID/drip_config.h`. Uncomment **exactly one**
+`DRIP_SCENARIO_*`:
 
-In this folder you can find every file that is used by the ESP32.
+| Scenario | Transport | Fleet | Endorsement (TEST_BE) | Use |
+|---|---|---|---|---|
+| `DRIP_SCENARIO_BENCH_BLE` *(default)* | BLE (ext-adv) | 1 drone (slot 0) | on | trusted drone over Bluetooth |
+| `DRIP_SCENARIO_BENCH_WIFI_SOFTAP` | Wi-Fi SoftAP | 1 drone (slot 0) | on | single drone over Wi-Fi (VSIE in an AP beacon) |
+| `DRIP_SCENARIO_BENCH_WIFI_FLEET` | Wi-Fi raw injection | 3 drones | on | multi-drone fleet over Wi-Fi |
+| `DRIP_SCENARIO_ROGUE_BLE` | BLE (ext-adv) | 1 drone (slot 3) | **off** | negative test: untrusted identity |
 
-The arduino library used are:
--Crypto by Rhys Weatherley [0.4.0]
--NimBLE-Arduino by h2zero [2.5.0] (i really don't remember if there is some bluetooth dead code but it was utilized during development and is still installed)
--Seeed_Arduino_mbedtls by Peter Yang [3.0.2]
+The board expands the scenario into the individual switches (transport, `FLEET_MAX`,
+`DRIP_UA_SLOT`, `DRIP_TEST_BE`). A build that enables two transports fails to compile
+(`#error`), and BLE is always single-drone.
 
-The board used is the "ESP32 Dev Module" but i belive that it work with almost any ESP32 board
+**Flash:** open `DRIP_Broadcast_RID.ino`, select the board, and upload. At boot the
+firmware prints the active scenario and re-verifies the slot identity before
+transmitting. The config line makes any log self-explaining:
 
-There are 23 flight's path at the user disposition to use, everyone of them is near the Interlagos Race Track. 
+```
+[CFG] scenario=BENCH_BLE  UA identity slot=0  FLEET_MAX=1  DRIP_TEST_BE=on
+```
 
-When reseted (be by the button or by power on) the ESP32 start broadcasting the flight path number 0. By typing "stop" in the serial monitor it display the bellow information
+---
 
-[Playback] Choose a flight to start transmitting again:
-             <number>   select and start that flight
-             reset      replay the current flight
-             list       show all flights
-===========================================================
-[Playback] Available flights:
-   0 : 0M63J2T001H037         270 pts  (~7.8 min real time)  <= selected
-   1 : 0M6CG9QR0A0FD6         843 pts  (~124.6 min real time)
-   2 : 1ZNBK5900C00A8        1032 pts  (~77.0 min real time)
-   3 : 3NZCHCP0043PS1         330 pts  (~1.8 min real time)
-   4 : 4GCCK6QR0B0QRZ         595 pts  (~2894.3 min real time)
-   5 : 5FSCK320115HYT         513 pts  (~5.9 min real time)
-   6 : F4XF82391006Q24L       135 pts  (~0.7 min real time)
-   7 : F5BKB246700F00DV       177 pts  (~3.7 min real time)
-   8 : F5FJC248L00D6GD3       765 pts  (~1549.5 min real time)
-   9 : F5FJC248M00DXTG9       378 pts  (~2.9 min real time)
-  10 : F67QC234U01429M1       180 pts  (~1069.1 min real time)
-  11 : F6Z9A23BHML35V6J      1062 pts  (~13.3 min real time)
-  12 : F6Z9A24AAML33B85      1074 pts  (~2927.7 min real time)
-  13 : F6Z9C23A7003A3HF       117 pts  (~0.7 min real time)
-  14 : F6Z9C23AB003BTNG       408 pts  (~2.4 min real time)
-  15 : F6Z9C23AR003DHVF        93 pts  (~0.5 min real time)
-  16 : F6Z9C24B60035ER9       916 pts  (~9.3 min real time)
-  17 : F8PJC246L0004BAG       285 pts  (~4.0 min real time)
-  18 : F986C254E0020E5T       732 pts  (~22.8 min real time)
-  19 : F9DEC258M029H723       264 pts  (~6.7 min real time)
-  20 : F9DEC259A029P8S8       209 pts  (~5.7 min real time)
-  21 : KCG0021GGR             237 pts  (~3.0 min real time)
-  22 : MissionAlpha          1019 pts  (~0.0 min real time)
-  23 : encrypted              194 pts  (~2901.8 min real time)
-[Playback] Type a number to select, or 'list' | 'info' | 'next' | 'reset'.
+## Transmitter — serial operation
 
-I this implementation the pub and priv key are hardcoded and can be easily changed.
-For each of this flight path is possible to determine an different pub and private key but as it is now they all shake the same pair.
-#---------------------------------------------------------------------------------------------
-#DRIP_Fleet_Broadcast-------------------------------------------------------------------------
+Open the Serial Monitor at **115200 baud**. There are ~27 flight tracks embedded (all
+near the Interlagos race track); at boot it starts transmitting flight 0.
 
-In this folder you can find every file that is used by the ESP32.
+Fleet commands:
 
-The arduino library used are:
--Crypto by Rhys Weatherley [0.4.0]
--NimBLE-Arduino by h2zero [2.5.0] (i really don't remember if there is some bluetooth dead code but it was utilized during development and is still installed)
--Seeed_Arduino_mbedtls by Peter Yang [3.0.2]
-
-The board used is the "ESP32 Dev Module" but i belive that it work with almost any ESP32 board
-
-There are 27 flight's path at the user disposition to use, everyone of them is near the Interlagos Race Track. 
-
-When reseted (be by the button or by power on) the ESP32 start broadcasting the flight path number 0. By typing "stop" in the serial monitor it display the bellow information
-
-[Playback] Choose a flight to start transmitting again:
-             <number>   select and start that flight
-             reset      replay the current flight
-             list       show all flights
-===========================================================
-[Playback] Available flights:
-   0 : 0M63J2T001H037             270 pts  (~7.8 min real time)
-   1 : 0M6CG9QR0A0FD6             843 pts  (~124.6 min real time)
-   2 : 1ZNBK5900C00A8            1032 pts  (~77.0 min real time)
-   3 : 3NZCHCP0043PS1             330 pts  (~1.8 min real time)
-   4 : 4GCCK6QR0B0QRZ             595 pts  (~2894.3 min real time)
-   5 : 5FSCK320115HYT             513 pts  (~5.9 min real time)
-   6 : F4XF82391006Q24L           135 pts  (~0.7 min real time)
-   7 : F5BKB246700F00DV           177 pts  (~3.7 min real time)
-   8 : F5FJC248L00D6GD3           765 pts  (~1549.5 min real time)
-   9 : F5FJC248M00DXTG9           378 pts  (~2.9 min real time)  
-  10 : F67QC234U01429M1           180 pts  (~1069.1 min real time)
-  11 : F6Z9A23BHML35V6J          1062 pts  (~13.3 min real time)
-  12 : F6Z9A24AAML33B85          1074 pts  (~2927.7 min real time)
-  13 : F6Z9C23A7003A3HF           117 pts  (~0.7 min real time)
-  14 : F6Z9C23AB003BTNG           408 pts  (~2.4 min real time)
-  15 : F6Z9C23AR003DHVF            93 pts  (~0.5 min real time)
-  16 : F6Z9C24B60035ER9           916 pts  (~9.3 min real time)
-  17 : F8PJC246L0004BAG           285 pts  (~4.0 min real time)
-  18 : F986C254E0020E5T           732 pts  (~22.8 min real time)
-  19 : F9DEC258M029H723           264 pts  (~6.7 min real time)
-  20 : F9DEC259A029P8S8           209 pts  (~5.7 min real time)
-  21 : KCG0021GGR                 237 pts  (~3.0 min real time)
-  22 : MissionAlpha              1019 pts  (~0.0 min real time)
-  23 : encrypted                  194 pts  (~2901.8 min real time)
-  24 : F6Z9A24AAML33B85-1108      329 pts  (~11.7 min real time)
-  25 : F6Z9A24AAML33B85-1109a    1465 pts  (~12.8 min real time)
-  26 : F6Z9A24AAML33B85-1109b    2700 pts  (~116.7 min real time)
-[Playback] Type a number to select, or 'list' | 'info' | 'next' | 'reset'.
-
-To controle the fleet you have the following commands:
-
+```
 fleet <N>                 -> N drones, flights auto-assigned 0..N-1
 fleet <N> same <flight>   -> N drones all replaying the same flight
-fleet set <slot> <flight> -> assign one slot
+fleet set <slot> <flight> -> assign a flight to a slot
 fleet list | fleet stop | fleet start
+```
 
-#---------------------------------------------------------------------------------------------
-#SNIFFER--------------------------------------------------------------------------------------
+Legacy commands (act on the focused drone):
 
-This is the code for the second ESP32 board with the sollemn objective to capture the messages of the broadcast and them display it in the serial communication port
-It's is Always capting the information but it will only record it when the Arduino_loggers is called:
+```
+<number>   select and start that flight
+list       list all flights (with point count and real duration)
+info | next | reset | stop
+```
 
-python arduino_logger.py --port COM3 --baud 921600 -o capture.txt
+`stop` in SoftAP/BLE mode removes the VSIE/advertising — the drone stops announcing
+Remote ID (like a drone that landed).
 
-If you prefers you can also transform the txt file in na pcap versions with the bellow comand:
+---
 
+## Sniffers and capture
+
+There are **two** sniffer firmwares, one per transport, each flashed onto a second
+ESP32:
+
+- `Observer+Sniffer/DRIP_Sniffer/DRIP_Sniffer.ino` — promiscuous **Wi-Fi** capture on
+  channel 6, filtering the ODID vendor IE.
+- `Observer+Sniffer/DRIP_BLE_Sniffer/DRIP_BLE_Sniffer.ino` — **BLE** capture, filtering
+  Service Data UUID `0xFFFA` / app code `0x0D`.
+
+> One sniffer does not replace the other: the Wi-Fi one cannot see BLE and vice versa.
+> Use the one that matches the transport the transmitter is using.
+
+The sniffer is always listening, but only records when you run the logger, which reads
+the sniffer's serial port and writes the capture file:
+
+```bash
+python arduino_logger.py --port COM5 --baud 921600 -o capture.txt
+```
+
+`COM5` is the sniffer's port on your PC; `capture.txt` is the output file name. The
+second ESP32 exists because the development PC's Wi-Fi card does not support
+promiscuous mode. If you want, you can convert a Wi-Fi capture to pcap for Wireshark:
+
+```
 "C:\Program Files\Wireshark\text2pcap.exe" -t "%H:%M:%S.%f" -l 105 capture.txt capture.pcap
+```
 
-#OUTDATED-------------------------------------------------------------------------------------
+---
 
-This folder contains only two files, an .ino one and a .py.
-These files is to utilize a second ESP32 board to capture the packages that the first board (the "drone") is broadcasting and make available to the PC via serial interface so the wireshark can receive the packages like it was capturing using he wi-fi board.
+## Observer — validate a capture
 
-There is no guarantee that this contraption work as intended and the last test using it was months ago but it is provided in this repository as there is chance that it will be necessary later and to permit contributions from others.
+All commands below run inside `Observer+Sniffer/`. The capture format (Wi-Fi
+"Format A" or the BLE "Format BT") is **auto-detected** — the same command works for
+both transports.
 
-To use it run the command below:
-python bridge.py COM3 921600 | "C:\Program Files\Wireshark\Wireshark.exe" -k -i -
+### Basic run
+
+```bash
+python observer.py capture.txt
+```
+
+**Expected output** (real example from a Wi-Fi fleet of 3 drones — all trusted):
+
+```
+Trust anchor: hierarchy.json  apex=2001:30:0:5:70f9:e8e9:b564:f448
+Ed25519 backend: ed25519.py (pure python reference)
+Input format: A (air capture - DRIP_Sniffer)
+DRIP payloads decoded: 1061
+Identities observed: 3 drone(s)
+  #  DET                                      MAC(s)                packs  key        auth
+  1  2001:30:3ff8:405:d952:5618:fbc9:c3cf     02:44:52:49:50:00       354  slot 0     OK  (59 wrap, 59 man)
+  2  2001:30:3ff8:405:a57e:87ab:5388:cbb8     02:44:52:49:50:02       354  slot 2     OK  (59 wrap, 60 man)
+  3  2001:30:3ff8:405:8412:4323:5d3c:a050     02:44:52:49:50:01       353  slot 1     OK  (59 wrap, 59 man)
+Findings by DET:
+  2001:30:3ff8:405:d952:5618:fbc9:c3cf  [trusted]  1 finding(s)
+        E-MAN-02 x1
+  ...
+```
+
+- `[trusted]` + `slot N` + `OK (… wrap, … man)` = identity resolved in the trust tree
+  and the DET↔key binding verified.
+- Residual findings like `E-MAN-02` are **capture sampling** gaps (the sniffer did not
+  catch every frame), **not** trust failures. The exit code is `1` when there is any
+  finding.
+
+### Other useful flags
+
+```bash
+python observer.py capture.txt --verbose      # print every decoded message
+python observer.py --list-keys                # print the keyring and exit
+python observer.py capture.txt --keyring FILE # 'DET_HEX PUBKEY_HEX' per line (adds/overrides)
+python observer.py capture.txt --now <unix> --max-age <sec>   # freshness check (E-FRESH-01)
+python observer.py capture.txt --pure-python  # force the ed25519.py reference (slow; cross-check)
+```
+
+At boot the observer runs a self-test cross-checking the fast Ed25519 backend (when
+available) against the pure reference in `ed25519.py`, over a valid and a tampered
+vector, and only uses the fast backend if the signatures agree byte for byte.
+
+---
+
+## Trust model and DNS key distribution
+
+The observer's trust is not a shared key pair: identities nest in a **hierarchy**
+(Apex → RAA → HDA → UA, RFC 9886) whose single source of truth is
+`Observer+Sniffer/hierarchy.json` (public data only — never private seeds). The
+observer answers three separate questions and **never** collapses them into one
+"valid":
+
+1. **Structural** — the DET is well-formed and its RAA/HDA zones nest.
+2. **Allow-list** — the DET nests under a trusted HDA (delegation) or is individually
+   enrolled in `hierarchy.json`.
+3. **Cryptographic binding** — the registered public key actually derives the DET
+   (one-way cSHAKE128, RFC 9374 §3.5.2). If no key is on file, the observer emits
+   `E-KEY-01` — it never fakes verification.
+
+### Resolve a DET offline
+
+```bash
+python observer.py --resolve 2001:30:3ff8:405:d952:5618:fbc9:c3cf
+```
+
+**Expected output** (excerpts):
+
+```
+DET  2001:30:3ff8:405:d952:5618:fbc9:c3cf
+Decoded fields (RFC 9374 3.3):
+  RAA    : 255
+  HDA    : 14340
+  Suite  : 5   (EdDSA/cSHAKE128)
+  reverse FQDN : f.c.3.c.9.c...ip6.arpa.
+Trust (RFC 9886 6 delegation + local allow-list):
+  HDA trusted : yes  -> HDA_TRUSTED level
+  UA enrolled : yes  -> UA_ENROLLED level (this exact DET is individually listed)
+DET<->key binding (RFC 9374 3.5.2):
+  binding        : VERIFIED  (key derives this DET)
+```
+
+### Capture an unknown drone's key from DNS
+
+For a DET the observer does not yet know, the public key can be fetched over DNS (a
+two-hop **PTR → TXT** lookup on the reverse `ip6.arpa.` name). The TXT record carries
+the key in base64; it is accepted only if it **decodes to 32 bytes and derives the
+DET** — DNS supplies a candidate, cSHAKE128 proves it.
+
+```bash
+python observer.py --dns-lookup <DET>            # one DET, live PTR->TXT, offers to save
+python observer.py capture.txt --dns-fallback    # 1 lookup per unknown DET during a capture
+python observer.py ... --dns-server <IP>         # alternate resolver
+python observer.py ... --anchor <file.json>      # swap the trust file
+```
+
+Default resolver: `141.227.148.117` (the partner's signed `driplab.example` zone).
+Needs `dnspython` + a network route. As an example, the slot-0 DET
+(`2001:30:3ff8:405:d952:5618:fbc9:c3cf`) is registered as
+`snfr2025000123.driplab.example`.
+
+> ⚠️ **DNSSEC = presence detection only.** The observer records whether an RRSIG
+> **was present** in the answer, but it does **not** validate the signature chain to
+> the root. A forged answer with a bogus RRSIG would pass the presence check today.
+> **Do not** treat a DNS-fetched key as "DNSSEC-validated": the observer's
+> cryptographic verdict always comes from the local DET↔key binding, which does not
+> depend on DNS being trustworthy. Full DNSSEC validation is future work.
+
+### Check hierarchy coherence
+
+After any edit to `hierarchy.json`, run the coherence check (re-derives every DET from
+its key, checks firmware vs observer, and validates the RAA/HDA numbers):
+
+```bash
+python check_hierarchy.py --header ..\DRIP_Fleet_Broadcast\DRIP_Broadcast_RID\drip_hierarchy.h --json hierarchy.json
+```
+
+**Expected output** (excerpts):
+
+```
+0. FILE SELF-CONSISTENCY  (re-derive every DET from its public key)
+   11 entr(ies) self-consistent
+1. DERIVATION  ... apex/raa/hda OK
+2. AGREEMENT   (drip_hierarchy.h vs hierarchy.json)  all 8 numbers agree
+3. HIERARCHY VALIDITY  (RFC 9886 6.2.1)  RAA 255 / HDA 14340 usable
+OK - the hierarchy is coherent, consistent across firmware and observer, ...
+NOTE: this proves the STRUCTURE. It does not prove any registry has
+      assigned these numbers - they are test values.
+```
+
+---
+
+## Negative test (rogue drone)
+
+The `DRIP_SCENARIO_ROGUE_BLE` scenario transmits an identity (slot 3) whose key is
+**not** enrolled in the trust tree, with **no** endorsement (Broadcast Endorsement
+off) and **absent** from DNS. It is the proof that the observer rejects what it should:
+the drone shows up in the capture, but with no key on file the binding is not done and
+the verdict is **`E-KEY-01`** (and, on a DNS lookup, `NXDOMAIN`) — never a false
+"valid".
+
+---
+
+## Support tools
+
+All in `Observer+Sniffer/`.
+
+### Decoder/validator self-test
+
+```bash
+python make_vectors.py --selftest
+```
+
+`make_vectors.py` is a **reference encoder** that hand-builds valid and deliberately
+broken ASTM/DRIP messages straight from the spec layout, and checks that the observer
+produces exactly the expected error code for each one.
+
+**Expected output** (excerpts):
+
+```
+  [PASS] valid pack (structural, placeholder Wrapper)  expect=(clean)   got: no findings
+  [PASS] E-DET-02 binding failure                      expect=E-DET-02  got: E-DET-02
+  [PASS] E-SIG-01 corrupted Wrapper signature          expect=E-SIG-01  got: E-SIG-01
+self-test: 16 passed, 0 failed
+```
+
+### Flight map
+
+Generates a self-contained HTML file that plots each drone's path (grouped by DET) on
+a Leaflet/OpenStreetMap map, from the same capture:
+
+```bash
+python make_map.py capture.txt -o my_flight.html --title "Test flight 3"
+```
+
+Open the `.html` in a browser. It needs internet only to load the Leaflet library and
+the map tiles.
+
+### New identity
+
+```bash
+python newkey.py     # generates a new SEED / PUBKEY / DET triple
+```
+
+### Error catalogue
+
+Every `E-*` (conformance) and `W-*` (capture warning) code is defined, with the
+ASTM/RFC clause behind it, in `Observer+Sniffer/errors.py`.

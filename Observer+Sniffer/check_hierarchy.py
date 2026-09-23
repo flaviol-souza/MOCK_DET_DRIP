@@ -127,6 +127,59 @@ def main():
     h = json.load(open(args.json, encoding="utf-8"))
     print(f"hierarchy: {args.json}")
 
+    # ---- 0. FILE SELF-CONSISTENCY  (every entry: compute_det(pubkey) == det) --
+    #
+    # RFC 9374 3.5.2 binds a DET one-way to its public key. This pass re-derives
+    # the DET of EVERY entry in the file (apex, all raas, all hdas, all ua) from
+    # its OWN public key and checks it against the stored det field. It is the
+    # broad "does the chain match the known DETs" gate: a wrong/typo'd key, or a
+    # DET copied from a registered-but-unheld identity (a key we do not actually
+    # hold), fails here immediately - before any chain logic. Nothing is trusted;
+    # the file's own det fields are verified, not read.
+    #
+    # This complements section 1 (which re-derives only the ONE active chain and
+    # also cross-checks the firmware header): section 0 covers the WHOLE file so
+    # an inconsistent entry in any chain cannot hide.
+    print("0. FILE SELF-CONSISTENCY  (re-derive every DET from its public key)")
+
+    def _all_entries(doc):
+        if isinstance(doc.get("apex"), dict):
+            yield "apex", doc["apex"]
+        for e in doc.get("raas", []):
+            yield "raa", e
+        if isinstance(doc.get("raa"), dict):
+            yield "raa", doc["raa"]
+        for e in doc.get("hdas", []):
+            yield "hda", e
+        if isinstance(doc.get("hda"), dict):
+            yield "hda", doc["hda"]
+        for e in doc.get("ua", []):
+            yield "ua", e
+
+    n_ok = 0
+    for kind, e in _all_entries(h):
+        try:
+            pub = bytes.fromhex(e["public_key"])
+            claimed = bytes.fromhex(e["det"])
+            raa, hda = e["raa"], e["hda"]
+        except (KeyError, ValueError) as ex:
+            problems.append(f"{kind} entry malformed (det/public_key/raa/hda): {ex}")
+            print(f"   {kind:5s} *** MALFORMED: {ex} ***")
+            continue
+        actual = det.compute_det(pub, raa, hda)
+        role = e.get("_role", "")
+        if actual == claimed:
+            n_ok += 1
+        else:
+            problems.append(f"{kind} '{role}': DET {claimed.hex().upper()} is NOT "
+                            f"derived by its public key (key derives "
+                            f"{actual.hex().upper()})")
+            print(f"   {kind:5s} {raa:>4}/{hda:<5} {ipaddress.IPv6Address(claimed)} "
+                  f" *** MISMATCH: key derives {ipaddress.IPv6Address(actual)} *** {role}")
+    print(f"   {n_ok} entr(ies) self-consistent"
+          + ("" if all("is NOT" not in p for p in problems) else "  (see mismatches above)"))
+    print()
+
     # The both-chains file uses plural "raas"/"hdas". The firmware header
     # describes ONE chain (the currently-flashed UA RAA/HDA). We validate THAT
     # chain here: pick the raa/hda entries whose numbers match the header (or the

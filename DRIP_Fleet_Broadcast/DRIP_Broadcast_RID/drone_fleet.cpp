@@ -85,8 +85,16 @@ static bool fleet_provision(uint8_t slot, uint16_t flight) {
 
     // Identity is bound to the SLOT, not the flight — that is what lets two
     // drones fly the same recorded track under different DETs.
-    if (!det_load_identity(slot, d->id)) {
-        Serial.printf("[Fleet] slot %u: no identity in the table\n", (unsigned)slot);
+    //
+    // Fleet vs single-UA (ADR 0004): a multi-drone fleet maps fleet slot i to
+    // identity slot i. A single-UA build (FLEET_MAX==1: SoftAP/BLE) emits ONE
+    // identity chosen by DRIP_UA_SLOT (drip_config.h), so a ROGUE scenario can
+    // put an unenrolled identity (DRIP_SLOT_ROGUE) on the air. FLEET_MAX is a
+    // compile-time constant, so this branch folds away at build time.
+    const uint8_t id_slot = (FLEET_MAX == 1) ? (uint8_t)DRIP_UA_SLOT : slot;
+    if (!det_load_identity(id_slot, d->id)) {
+        Serial.printf("[Fleet] slot %u: no identity %u in the table\n",
+                      (unsigned)slot, (unsigned)id_slot);
         return false;
     }
     if (!drone_playback_init(&d->track, flight)) {
@@ -310,6 +318,16 @@ void fleet_init() {
     // Signing WARN/ERROR lines are never gated, so a quiet console means
     // "everything is signing", not "no information".
     g_debug_slot = -1;
+
+    // Boot observability (ADR 0004): the ONE line that says exactly what was
+    // built, so a serial log / capture is self-explaining.
+#ifdef DRIP_TEST_BE
+    const char *be_state = "on";
+#else
+    const char *be_state = "off";
+#endif
+    Serial.printf("[CFG] scenario=%s  UA identity slot=%d  FLEET_MAX=%d  DRIP_TEST_BE=%s\n",
+                  DRIP_SCENARIO_NAME, (int)DRIP_UA_SLOT, (int)FLEET_MAX, be_state);
 
     if (!drone_playback_available()) {
         Serial.println("[Fleet] ERROR: drone_data.h contains no flights — nothing to fly.");
