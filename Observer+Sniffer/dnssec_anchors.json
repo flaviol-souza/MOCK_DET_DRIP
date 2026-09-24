@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "STATIC PINNED DNSSEC trust anchors for the two private test islands used by",
+    "this PoC (supplied out-of-band by AFNIC). These zones do NOT chain to the",
+    "public DNS root, so validation is anchored here.",
+    "",
+    "*** PIN IS STATIC — RFC 5011 (automated trust-anchor rollover) is OUT OF SCOPE. ***",
+    "The observer is a run-once CLI: it cannot maintain RFC 5011 state (30-day",
+    "add-hold-down, continuous DNSKEY polling, REVOKE tracking). If AFNIC rolls a",
+    "KSK, re-pin the new DNSKEY here by hand. In a real deployment, anchor",
+    "lifecycle belongs to a persistent validator (unbound/BIND auto-trust-anchor).",
+    "",
+    "Data only: DNSKEY records are public. Alg 13 = ECDSA P-256 / SHA-256.",
+    "Consumed by identity_lookup.py; nothing else in the pipeline reads this."
+  ],
+  "anchors": [
+    {
+      "zone": "3.0.0.1.0.0.2.ip6.arpa.",
+      "dnskey": "257 3 13 oTPUQVXacXfPFn6VUUU4JJhDGeH4WD3baZciF/cg4gSkOAgGcCKPU00AOzMwfD28iC/lgAphgCiyKQCXTLpwcw==",
+      "use": "DET -> PTR reverse chain (Apex -> RAA -> HDA -> DET/PTR)"
+    },
+    {
+      "zone": "driplab.example.",
+      "dnskey": "257 3 13 CuJrjHFldaJuwpret8jvWZip+sZXLawehSmsVYvrGasCaVYzGL26KYt+BQbh40eav26+NtrF4z9fU1Sqek0XWA==",
+      "use": "PTR target -> TXT / public-key retrieval"
+    }
+  ]
+}

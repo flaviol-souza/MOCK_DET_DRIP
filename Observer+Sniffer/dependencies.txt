@@ -1,0 +1,18 @@
+# MOCK DET DRIP — observer Python dependencies
+# ---------------------------------------------------------------------------
+# The observer CORE (decode, DRIP validation, DET<->key binding, offline
+# --resolve, make_vectors self-test) runs on the Python 3 standard library
+# ALONE. Everything below is OPTIONAL and only enables the DNS path.
+#
+# Install:  pip install -r dependencies.txt
+# ---------------------------------------------------------------------------
+
+# Live DNS lookups: --dns-lookup / --dns-fallback (PTR -> TXT over the network).
+# Without it, the observer stays fully usable offline (presence-only / no DNS).
+dnspython>=2.6
+
+# DNSSEC signature validation of the DNS answers (RFC 4035 / alg 13 ECDSA P-256).
+# Needed to turn "RRSIG present" into "RRSIG VALIDATED" against the pinned
+# anchors in dnssec_anchors.json. Without it, the DNS path degrades to
+# presence-only, exactly as before.
+cryptography>=42

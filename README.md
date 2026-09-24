@@ -85,9 +85,12 @@ verdict.
     code). **Requires Extended Advertising enabled in the library:** in
     `NimBLE-Arduino/src/nimconfig.h`, set `CONFIG_BT_NIMBLE_EXT_ADV 1`.
   - **Seeed_Arduino_mbedtls** — leftover from earlier work; may be installed.
-- **Python 3** on the PC for the observer. **Optional** dependency: `dnspython`, needed
-  only for live DNS lookups (`--dns-lookup` / `--dns-fallback`); the rest of the
-  toolchain runs offline without it.
+- **Python 3** on the PC for the observer. The core (decode, DRIP validation, DET↔key
+  binding, offline `--resolve`, self-test) needs **only the standard library**. Two
+  **optional** extras enable the DNS path: `dnspython` (live PTR→TXT lookups) and
+  `cryptography` (DNSSEC signature validation, ECDSA P-256). Install both with
+  `pip install -r Observer+Sniffer/dependencies.txt`; without them the DNS path
+  degrades gracefully to offline / presence-only.
 - **Serial:** transmitter console at **115200 baud**; sniffer at **921600 baud**.
 
 ---
@@ -265,31 +268,91 @@ DET<->key binding (RFC 9374 3.5.2):
   binding        : VERIFIED  (key derives this DET)
 ```
 
-### Capture an unknown drone's key from DNS
+### Capture and DNSSEC-validate an unknown drone's key from DNS
 
-For a DET the observer does not yet know, the public key can be fetched over DNS (a
-two-hop **PTR → TXT** lookup on the reverse `ip6.arpa.` name). The TXT record carries
-the key in base64; it is accepted only if it **decodes to 32 bytes and derives the
-DET** — DNS supplies a candidate, cSHAKE128 proves it.
+For a DET the observer does not yet know, the public key is fetched over DNS and the
+DNS answer is **cryptographically validated with DNSSEC** before the key is trusted.
+Two independent guarantees are produced and kept **separate**:
 
-```bash
-python observer.py --dns-lookup <DET>            # one DET, live PTR->TXT, offers to save
-python observer.py capture.txt --dns-fallback    # 1 lookup per unknown DET during a capture
-python observer.py ... --dns-server <IP>         # alternate resolver
-python observer.py ... --anchor <file.json>      # swap the trust file
+- **DNSSEC validation** — the RRSIG chain of each DNS answer verifies up to a *pinned
+  trust anchor* (`dnssec_anchors.json`), RFC 4035. This authenticates the DNS answer
+  itself (it defeats a forged/spoofed PTR or TXT).
+- **DET↔key binding** — the fetched key must derive the DET (one-way cSHAKE128, RFC
+  9374 §3.5.2). This is the **decisive** trust check and does not depend on DNS.
+
+#### How it works
+
+```mermaid
+flowchart TD
+    DET["DET seen on the air<br/>(or passed to --dns-lookup)"]
+    DET --> PTR["Hop 1: PTR query<br/>reverse ip6.arpa name"]
+    PTR -->|FQDN| TXT["Hop 2: TXT query<br/>on that FQDN"]
+    TXT -->|"pubkey (base64, 32 B)"| KEY["candidate Ed25519 key"]
+
+    PTR -.->|"RRSIG chain"| A1["pinned anchor<br/>3.0.0.1.0.0.2.ip6.arpa."]
+    TXT -.->|"RRSIG chain"| A2["pinned anchor<br/>driplab.example."]
+    A1 --> DV["DNSSEC: do BOTH chains<br/>validate? (RFC 4035)"]
+    A2 --> DV
+
+    KEY --> BIND["binding: does the key derive the DET?<br/>(cSHAKE128, RFC 9374 3.5.2)"]
+    DV --> VERDICT["VERDICT"]
+    BIND --> VERDICT
+    VERDICT --> OK["DNSSEC VALIDATED + BINDING VERIFIED<br/>=> trustworthy identity"]
 ```
 
-Default resolver: `141.227.148.117` (the partner's signed `driplab.example` zone).
-Needs `dnspython` + a network route. As an example, the slot-0 DET
-(`2001:30:3ff8:405:d952:5618:fbc9:c3cf`) is registered as
-`snfr2025000123.driplab.example`.
+The two private test zones do not chain to the public DNS root, so validation is
+anchored at two DNSKEYs pinned in `dnssec_anchors.json` (supplied out-of-band by the
+zone operator):
 
-> ⚠️ **DNSSEC = presence detection only.** The observer records whether an RRSIG
-> **was present** in the answer, but it does **not** validate the signature chain to
-> the root. A forged answer with a bogus RRSIG would pass the presence check today.
-> **Do not** treat a DNS-fetched key as "DNSSEC-validated": the observer's
-> cryptographic verdict always comes from the local DET↔key binding, which does not
-> depend on DNS being trustworthy. Full DNSSEC validation is future work.
+| Chain | Pinned anchor zone | Authenticates |
+|---|---|---|
+| DET → PTR (reverse) | `3.0.0.1.0.0.2.ip6.arpa.` (Apex → RAA → HDA → PTR) | the FQDN the DET maps to |
+| PTR target → TXT | `driplab.example.` | the TXT record carrying the public key |
+
+#### Commands
+
+```bash
+python observer.py --dns-lookup <DET>            # one DET: live PTR->TXT + DNSSEC, offers to save
+python observer.py capture.txt --dns-fallback    # one lookup per unknown DET during a capture
+python observer.py ... --dns-server <IP>         # alternate resolver
+python observer.py ... --anchor <file.json>      # swap the trust file (default hierarchy.json)
+```
+
+Needs `dnspython` + `cryptography` (see [Hardware and libraries](#hardware-and-libraries))
+and a route to the resolver (default `141.227.148.117`). Example: the slot-0 DET
+`2001:30:3ff8:405:d952:5618:fbc9:c3cf` is registered as `snfr2025000123.driplab.example`.
+
+**Expected output** (real, validated end to end):
+
+```
+python observer.py --dns-lookup 2001:30:3ff8:405:d952:5618:fbc9:c3cf
+  DET   : 2001:30:3ff8:405:d952:5618:fbc9:c3cf
+  FQDN  : snfr2025000123.driplab.example.
+  TXT record:
+    mfg        : AeroTech Robotics Ltd
+    sn         : SN-FR-2025-000123
+    model      : ATX-Quad-400
+    reg_status : active
+    pubkey     : 9QVwTrVE+GEZDy2O2sm6g/Mg1eOHJrP1HCIIUTIOx+Y=  (32 bytes)
+  DNSSEC : VALIDATED — RRSIG chain verifies to the pinned anchor (dnssec_anchors.json)
+  BINDING: VERIFIED — the DNS key derives this DET (RFC 9374 3.5.2)
+```
+
+When validation does not reach a clean `VALIDATED`, a `why:` line reports the exact
+reason per hop (no anchor, `cryptography` not installed, a broken DS at a zone cut,
+etc.), so a failure is diagnosable instead of silent.
+
+> ⚠️ **Scope of the DNSSEC validation (state this precisely in the thesis):**
+> - **Positive answers are validated** to the pinned anchors — the case shown above.
+> - **Trust anchors are STATIC PINS; RFC 5011 (automated anchor rollover) is OUT OF
+>   SCOPE.** The observer is a run-once CLI and cannot keep RFC 5011 state (30-day
+>   add-hold-down, continuous DNSKEY polling, REVOKE tracking). If the operator rolls
+>   a KSK, re-pin it in `dnssec_anchors.json` by hand; in a real deployment, anchor
+>   lifecycle belongs to a persistent validator (unbound/BIND `auto-trust-anchor`).
+> - **Authenticated denial (NSEC/NSEC3) is not validated yet** — an `NXDOMAIN` (e.g.
+>   the rogue) surfaces as *inconclusive* (`None`), not as proven-absent. Phase 2.
+> - DNSSEC authenticates the DNS *answer*; the decisive trust check remains the local
+>   DET↔key binding, which holds even if DNS is untrusted.
 
 ### Check hierarchy coherence
 

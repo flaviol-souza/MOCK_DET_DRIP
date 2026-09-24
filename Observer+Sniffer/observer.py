@@ -1209,9 +1209,20 @@ def _finish_dns_lookup(r, anchor_path):
           f"{'' if not r.pubkey else '  (' + str(len(r.pubkey)) + ' bytes)'}")
     print()
 
-    # DNSSEC — presence only, stated honestly.
-    if r.dnssec_present:
-        print("  DNSSEC : RRSIG present — NOT validated (presence-only; see docs)")
+    # DNSSEC — chain validation against the pinned anchors when available,
+    # otherwise the honest presence-only fallback.
+    if r.dnssec_validated is True:
+        print("  DNSSEC : VALIDATED — RRSIG chain verifies to the pinned anchor "
+              "(dnssec_anchors.json)")
+    elif r.dnssec_validated is False:
+        print("  DNSSEC : FAILED — RRSIG chain did NOT validate; the DNS answer "
+              "is NOT trustworthy")
+        if r.dnssec_detail:
+            print(f"           why: {r.dnssec_detail}")
+    elif r.dnssec_present:
+        print("  DNSSEC : RRSIG present — NOT validated (presence-only)")
+        if r.dnssec_detail:
+            print(f"           why: {r.dnssec_detail}")
     else:
         print("  DNSSEC : no RRSIG in answer")
 
@@ -1227,6 +1238,10 @@ def _finish_dns_lookup(r, anchor_path):
     print()
 
     # Offer to write — but only when it is safe to.
+    if r.dnssec_validated is False:
+        print("Not offering to save: DNSSEC validation FAILED, so the DNS answer "
+              "(and its key) cannot be trusted. Nothing written.")
+        return 1
     if r.binding_ok is not True:
         print("Not offering to save: the DET<->key binding did not verify, so "
               "this identity is not trustworthy. Nothing written.")
