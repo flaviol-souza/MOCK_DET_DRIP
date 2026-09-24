@@ -329,6 +329,11 @@ void fleet_init() {
     Serial.printf("[CFG] scenario=%s  UA identity slot=%d  FLEET_MAX=%d  DRIP_TEST_BE=%s\n",
                   DRIP_SCENARIO_NAME, (int)DRIP_UA_SLOT, (int)FLEET_MAX, be_state);
 
+    // Clock status (ADR 0002): timestamps use the PC clock once seeded; until
+    // then the SIM_DRIP_TIME_BASE fallback is in effect (may be stale).
+    Serial.printf("[Time] fallback base active (SIM_DRIP_TIME_BASE). Send "
+                  "'time <unix_UTC>' to sync to the PC clock for fresh timestamps.\n");
+
     if (!drone_playback_available()) {
         Serial.println("[Fleet] ERROR: drone_data.h contains no flights — nothing to fly.");
         Serial.println("[Fleet] (The old flight_sim fallback was dropped for the fleet: it is");
@@ -351,6 +356,7 @@ void fleet_init() {
     Serial.println("[Fleet] commands: fleet <1..3> | fleet <n> same <flight> |");
     Serial.println("                  fleet set <slot> <flight> | fleet list |");
     Serial.println("                  focus <slot> | debug off|on|<slot> |");
+    Serial.println("                  time <unix_UTC> |");
     Serial.println("                  list | info | next | reset | stop | <number>");
 }
 
@@ -394,6 +400,14 @@ static bool parse_u16(const char *s, uint16_t *out) {
     long v = strtol(s, &end, 10);
     if (end == s || *end != '\0' || v < 0 || v > 65535) return false;
     *out = (uint16_t)v;
+    return true;
+}
+
+static bool parse_u32(const char *s, uint32_t *out) {
+    char *end;
+    unsigned long v = strtoul(s, &end, 10);
+    if (end == s || *end != '\0') return false;
+    *out = (uint32_t)v;
     return true;
 }
 
@@ -452,6 +466,30 @@ void fleet_cmd() {
         } else {
             fleet_set_size((uint8_t)cnt, false, 0);
         }
+        return;
+    }
+
+    // ---- time <unix> : seed the DRIP clock from the PC's real UTC clock ------
+    // ADR 0002: real clock via PC serial (priority), SIM_DRIP_TIME_BASE fallback.
+    if (strcasecmp(tok[0], "time") == 0 || strcasecmp(tok[0], "settime") == 0) {
+        uint32_t unix_secs;
+        if (ntok < 2 || !parse_u32(tok[1], &unix_secs)) {
+            Serial.println("[Time] usage: time <unix_seconds_UTC>  (e.g. `date +%s` on the PC)");
+            return;
+        }
+        if (unix_secs < DRIP_EPOCH_UNIX_S) {
+            Serial.println("[Time] rejected: value is before the DRIP epoch (2019-01-01).");
+            return;
+        }
+        drip_time_set_unix(unix_secs);
+        // The Broadcast Endorsement chain was signed at boot with the fallback
+        // base; re-issue it now so its VNB/VNA also track the real clock (same
+        // refresh 'fleet set' does). Per-message Wrapper/Manifest timestamps
+        // already follow the seeded clock via drip_timestamp().
+        fleet_reg_refresh();
+        Serial.printf("[Time] seeded from PC clock: unix=%lu -> DRIP base=%lu "
+                      "(real clock active; endorsement re-issued)\n",
+                      (unsigned long)unix_secs, (unsigned long)drip_time_base_epoch());
         return;
     }
 
