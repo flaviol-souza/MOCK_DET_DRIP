@@ -24,10 +24,10 @@
 // ===========================================================================
 
 // ---- 1) choose exactly ONE scenario ---------------------------------------
-#define DRIP_SCENARIO_BENCH_BLE
+// #define DRIP_SCENARIO_BENCH_BLE
 // #define DRIP_SCENARIO_BENCH_WIFI_SOFTAP
 // #define DRIP_SCENARIO_BENCH_WIFI_FLEET
-// #define DRIP_SCENARIO_ROGUE_BLE          // R1 negative test: untrusted UA
+#define DRIP_SCENARIO_ROGUE_BLE          // R1 negative test: untrusted UA
                                             //   (no endorsement, key not enrolled,
                                             //   absent from DNS). The observer
                                             //   MUST reject it (E-KEY-01 / NXDOMAIN).
