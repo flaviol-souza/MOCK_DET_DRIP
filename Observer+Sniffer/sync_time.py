@@ -12,8 +12,9 @@
 #  in the Serial Monitor yourself - this script only automates that.)
 #
 #  Usage:
-#     python sync_time.py --port COM4            # transmitter console @115200
-#     python sync_time.py --port COM4 --wait 3   # wait longer for boot
+#     python sync_time.py --port COM4                    # current PC time
+#     python sync_time.py --port COM4 --plus_min 10      # current time + 10 min
+#     python sync_time.py --port COM4 --wait 3           # wait longer for boot
 # =============================================================================
 import argparse
 import sys
@@ -32,14 +33,16 @@ def main():
     ap.add_argument("--baud", type=int, default=115200, help="console baud (default 115200)")
     ap.add_argument("--wait", type=float, default=2.0,
                     help="seconds to wait after opening, to let the board boot")
+    ap.add_argument("--plus_min", type=int, default=0,
+                    help="minutes to add to the PC time before seeding (default 0)")
     args = ap.parse_args()
 
     try:
         with serial.Serial(args.port, args.baud, timeout=1) as s:
             time.sleep(args.wait)                 # let the ESP32 finish booting
-            now = int(time.time())                # Unix seconds, UTC by definition
+            now = int(time.time()) + args.plus_min * 60  # Unix seconds, UTC
             s.write(f"time {now}\n".encode())
-            print(f"sent: time {now}")
+            print(f"sent: time {now} (PC time {args.plus_min:+d} min)")
             # Echo the board's reply for a couple of seconds so you see it seed.
             t0 = time.time()
             while time.time() - t0 < 2.0:

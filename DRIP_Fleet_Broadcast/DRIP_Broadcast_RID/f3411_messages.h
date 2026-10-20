@@ -53,10 +53,10 @@
 // SIM_DRIP_TIME_BASE is an approximate "now" in the DRIP epoch for simulation.
 // Update it before each test session:
 //   SIM_DRIP_TIME_BASE = <current Unix time> - DRIP_EPOCH_UNIX_S
-// Example for Sep 2026: 1790235391 - 1546300800 = 243934591
+// Example for Oct 2026: 1792500359 - 1546300800 = 246199559
 // ---------------------------------------------------------------------------
 #define DRIP_EPOCH_UNIX_S    1546300800UL
-#define SIM_DRIP_TIME_BASE   243934591UL   // ≈ Sep 2026 — UPDATE before testing
+#define SIM_DRIP_TIME_BASE   246199559UL   // ≈ Oct 2026 UTC; +10 min build margin
 #define DRIP_VNA_OFFSET_S    120UL         // RFC 9575 §3.2.4.3 recommended offset
 
 // drip_timestamp() is declared in drip_time.h (requires Arduino.h)

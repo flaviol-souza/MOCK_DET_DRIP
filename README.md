@@ -153,25 +153,46 @@ DRIP/ASTM timestamps use the DRIP epoch (seconds since 2019-01-01, RFC 9575 §3.
 The firmware takes "now" from a real clock, in priority order:
 
 1. **PC clock over serial (priority).** Seed it once per session with the current UTC
-   time — type it in the Serial Monitor, or push it with the helper:
+   time — type it in the Serial Monitor, or push it with the helper. The transmitter
+   uses 115200 baud and the serial port must not be open in another program:
    ```bash
-   # in the Serial Monitor (get the epoch, e.g. python -c "import time;print(int(time.time()))")
-   time 1790261803
-
-   # or automatically — close the Serial Monitor first (one program per port):
+   # current PC time
    python sync_time.py --port COM4
+
+   # current PC time plus 10 minutes
+   python sync_time.py --port COM4 --plus_min 10
+
+   # wait longer for the board to finish booting
+   python sync_time.py --port COM4 --wait 5
    ```
+   The optional `--plus_min N` adds `N` minutes before seeding; negative values are
+   accepted too. For example, `--plus_min 10` sends the PC time plus ten minutes.
    The firmware replies `[Time] seeded from PC clock: … (real clock active; endorsement
    re-issued)` and re-signs the endorsement chain, so both the per-message and the
    endorsement timestamps become fresh.
+
+   The same operation can be performed manually in the Serial Monitor. Obtain the
+   current Unix time on the PC and send it to the transmitter:
+   ```bash
+   python -c "import time; print(int(time.time()))"
+   time <unix_seconds_UTC>
+   ```
+   Close the Serial Monitor before using `sync_time.py`; a serial port can be used by
+   only one program at a time.
 2. **Fallback constant** `SIM_DRIP_TIME_BASE` (`f3411_messages.h`), used until a seed
-   arrives, so a session with no PC still transmits.
+   arrives, so a session with no PC still transmits. It is currently maintained as a
+   bench fallback with a small build-time margin, not as a persistent real-time clock.
 
 Without a seed (no PC connected) timestamps use the fallback and may be stale, which
 trips the observer's freshness check (`E-FRESH-01`) under `--now`/`--max-age`. The clock
 does **not** persist across resets — the ESP32-S3 has no onboard RTC/GPS — so re-seed
 each session. A battery-backed RTC or a GPS module is the natural next step for a clock
 that survives power cycles.
+
+> **Window caution:** the default DRIP validity window is 120 seconds. A future offset
+> such as `--plus_min 10` can make a newly booted transmitter appear "not yet valid"
+> until the receiver clock reaches the seeded timestamp. Use it only when the build and
+> flash delay require it; immediate PC synchronization (`--plus_min 0`) is preferred.
 
 ---
 
