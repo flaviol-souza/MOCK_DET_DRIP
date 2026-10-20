@@ -1,0 +1,96 @@
+{
+  "vector": "T-901",
+  "title": "DRIP Extended-Transport Wrapper with co-located Message Pack",
+  "purpose": "Byte-exact fixture for Wrapper signature verification (rebuildWrapperEvidence). ADR 0003; RFC 9575 \u00a74.1/\u00a74.3.2/\u00a74.3.3.",
+  "source": {
+    "capture": "CaptureWithDNS.txt",
+    "location": "frame[4] 02:44:52:49:50:02 cnt=0x10",
+    "generated_by": "make_wrapper_vector.py (from real air capture)",
+    "reconstruction_ref": "odid.reconstruct_wrapper_evidence == firmware drip_auth.cpp collect_evidence_order"
+  },
+  "identity": {
+    "det": "2001:30:3ff8:405:a57e:87ab:5388:cbb8",
+    "det_hex": "200100303FF80405A57E87AB5388CBB8",
+    "ua_public_key": "B80BC263962420FBF1454E61BB149FCD1BDC447195B12D63C69E7FB7AEAAC3AC"
+  },
+  "message_pack": {
+    "raw": "F21908024501200100303FF80405A57E87AB5388CBB800000000000012200000008FD3DFF1162A2AE4FFFF760876080000B06D0000424002F4DFF12C452AE40100006709D0070077089EAF050C00225004599EAF050C029EAF050C16B0050C200100303FF804052251A57E87AB5388CBB805D96837BEBAD25BF7F44F6038C54E2252F8264A28B1EE4AA7520F4D76708F60440F40BE66739D6E22538C2CEEDAEC890BD300F3CAF46A88528AE4A948070F6B0922545C4F050000000000000000000000000000000000000000",
+    "message_count": 8,
+    "note": "ASTM Message Pack (Type 0xF). Header 3 B + N x 25 B."
+  },
+  "wrapper_wire": {
+    "sam_type": "0x02 (DRIP Wrapper)",
+    "note": "Evidence is CLEARED on the wire (\u00a74.3.2). sam_data after the 1-byte SAM Type = VNB|VNA|DET|Sig = 88 B.",
+    "vnb_le": "9EAF050C",
+    "vna_le": "16B0050C",
+    "vnb": 201699230,
+    "vna": 201699350,
+    "det_hex": "200100303FF80405A57E87AB5388CBB8",
+    "signature": "05D96837BEBAD25BF7F44F6038C54EF8264A28B1EE4AA7520F4D76708F60440F40BE66739D6E8C2CEEDAEC890BD300F3CAF46A88528AE4A948070F6B095C4F05",
+    "sam_data": "9EAF050C16B0050C200100303FF80405A57E87AB5388CBB805D96837BEBAD25BF7F44F6038C54EF8264A28B1EE4AA7520F4D76708F60440F40BE66739D6E8C2CEEDAEC890BD300F3CAF46A88528AE4A948070F6B095C4F05"
+  },
+  "evidence_inputs": {
+    "note": "Co-located non-Auth messages (25 B each). Feed these to rebuildWrapperEvidence; sort ascending by ASTM Message Type (stable), exclude Auth (\u00a74.3.2), max 4 (\u00a74.3.3).",
+    "count": 3,
+    "in_pack_order": [
+      {
+        "pack_index": 0,
+        "type": 0,
+        "type_name": "Basic ID",
+        "raw": "024501200100303FF80405A57E87AB5388CBB8000000000000"
+      },
+      {
+        "pack_index": 1,
+        "type": 1,
+        "type_name": "Location/Vector",
+        "raw": "12200000008FD3DFF1162A2AE4FFFF760876080000B06D0000"
+      },
+      {
+        "pack_index": 2,
+        "type": 4,
+        "type_name": "System",
+        "raw": "424002F4DFF12C452AE40100006709D0070077089EAF050C00"
+      }
+    ],
+    "in_evidence_order": [
+      {
+        "pack_index": 0,
+        "type": 0,
+        "type_name": "Basic ID",
+        "raw": "024501200100303FF80405A57E87AB5388CBB8000000000000"
+      },
+      {
+        "pack_index": 1,
+        "type": 1,
+        "type_name": "Location/Vector",
+        "raw": "12200000008FD3DFF1162A2AE4FFFF760876080000B06D0000"
+      },
+      {
+        "pack_index": 2,
+        "type": 4,
+        "type_name": "System",
+        "raw": "424002F4DFF12C452AE40100006709D0070077089EAF050C00"
+      }
+    ]
+  },
+  "evidence": {
+    "note": "Reconstructed Evidence = the non-Auth frames concatenated in ASTM Message Type order.",
+    "hex": "024501200100303FF80405A57E87AB5388CBB800000000000012200000008FD3DFF1162A2AE4FFFF760876080000B06D0000424002F4DFF12C452AE40100006709D0070077089EAF050C00",
+    "length": 75
+  },
+  "signed_data": {
+    "note": "The exact bytes the UA signed (\u00a74.1 Fig 4): VNB(4 LE) | VNA(4 LE) | Evidence | UA_DET(16).",
+    "hex": "9EAF050C16B0050C024501200100303FF80405A57E87AB5388CBB800000000000012200000008FD3DFF1162A2AE4FFFF760876080000B06D0000424002F4DFF12C452AE40100006709D0070077089EAF050C00200100303FF80405A57E87AB5388CBB8",
+    "length": 99
+  },
+  "verification": {
+    "backend": "cryptography 50.0.1 (OpenSSL)",
+    "algorithm": "Ed25519 (RFC 8032)",
+    "verified": true
+  },
+  "negative_check": {
+    "note": "Same Wrapper, but the LAST byte of the Evidence is flipped (one tampered co-located frame). Verification MUST be false.",
+    "tampered_evidence_hex": "024501200100303FF80405A57E87AB5388CBB800000000000012200000008FD3DFF1162A2AE4FFFF760876080000B06D0000424002F4DFF12C452AE40100006709D0070077089EAF050C01",
+    "verified": false
+  }
+}
